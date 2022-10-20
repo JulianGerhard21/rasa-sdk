@@ -220,7 +220,7 @@ class ActionExecutor:
         if not getattr(package, "__path__", None):
             return
 
-        for loader, name, is_pkg in pkgutil.walk_packages(package.__path__):
+        for loader, name, is_pkg in pkgutil.walk_packages(package.__path__):  # type: ignore  # mypy issue #1422
             full_name = package.__name__ + "." + name
             self._import_module(full_name)
 
@@ -260,6 +260,7 @@ class ActionExecutor:
         """
         try:
             self._import_submodules(package)
+            self._action_package_name = package
         except ImportError:
             logger.exception(f"Failed to register package '{package}'.")
             sys.exit(1)
@@ -294,6 +295,7 @@ class ActionExecutor:
         to_reload = {}
 
         for path, (timestamp, module) in self._modules.items():
+
             try:
                 new_timestamp = os.path.getmtime(path)
             except OSError:
@@ -305,7 +307,7 @@ class ActionExecutor:
 
         return to_reload
 
-    def reload(self) -> None:
+    def reload(self, action_package_name) -> None:
         """Reload all Python modules that have been loaded in the past.
 
         To check if a module should be reloaded, the file's last timestamp is
@@ -319,6 +321,12 @@ class ActionExecutor:
         """
         to_reload = self._find_modules_to_reload()
         any_module_reloaded = False
+
+        module = importlib.import_module(action_package_name)
+
+        previously_loaded_modules = [module.__name__ for path, (timestamp, module) in self._modules.items()]
+        present_modules = [module.__name__ + "." + name for loader, name, is_pkg in
+                           pkgutil.walk_packages(module.__path__)]
 
         for path, (timestamp, module) in to_reload.items():
             try:
@@ -338,6 +346,11 @@ class ActionExecutor:
 
         if any_module_reloaded:
             self._register_all_actions()
+
+        if list(set(present_modules) - set(previously_loaded_modules)):
+            logger.info(
+                "Calculated file difference between previously_loaded_modules and present_modules hence re-registering packages.")
+            self.register_package(package=self._action_package_name)
 
     @staticmethod
     def _create_api_response(
@@ -369,7 +382,7 @@ class ActionExecutor:
                     "We will try to make this work, but this "
                     "might go wrong!"
                 )
-                validated.append(event.as_dict())
+                validated.append(event.as_dict())  # type: ignore
             else:
                 logger.error(
                     f"Your action's '{action_name}' run method returned an invalid "
